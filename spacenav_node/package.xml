@@ -21,6 +21,7 @@
   <depend>sensor_msgs</depend> 
   <depend>libspnav-dev</depend> 
   <depend>libx11-dev</depend>
-  
+  <depend>robotnik_msgs</depend>
+
   <exec_depend>spacenavd</exec_depend> 
 </package>

@@ -39,6 +39,11 @@
 #include "geometry_msgs/Vector3.h"
 #include "geometry_msgs/Twist.h"
 #include "sensor_msgs/Joy.h"
+#include <robotnik_msgs/enable_disable.h>
+
+
+//! Flag to enable/disable the communication with the publishers topics
+bool bEnable = true; // Communication flag enabled by default
 
 /** Ensure that the vector parameter has three components.
  *
@@ -69,18 +74,33 @@ bool ensureThreeComponents(std::vector<double>& param)
   return False;
 }
 
+/**
+ *  Enables/Disables the pad
+ * 
+ */
+bool EnableDisable(robotnik_msgs::enable_disable::Request &req, robotnik_msgs::enable_disable::Response &res){
+  bEnable = req.value;
+  ROS_INFO("SummitXL::Spacenav: Setting to %d", req.value);
+  res.ret = true;
+  return true;		
+}
+
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "spacenav");
+  ros::NodeHandle private_nh("~");
 
   ros::NodeHandle node_handle;
-  ros::Publisher offset_pub = node_handle.advertise<geometry_msgs::Vector3>("spacenav/offset", 2);
-  ros::Publisher rot_offset_pub = node_handle.advertise<geometry_msgs::Vector3>("spacenav/rot_offset", 2);
-  ros::Publisher twist_pub = node_handle.advertise<geometry_msgs::Twist>("spacenav/twist", 2);
-  ros::Publisher joy_pub = node_handle.advertise<sensor_msgs::Joy>("spacenav/joy", 2);
+  ros::Publisher offset_pub = private_nh.advertise<geometry_msgs::Vector3>("offset", 2);
+  ros::Publisher rot_offset_pub = private_nh.advertise<geometry_msgs::Vector3>("rot_offset", 2);
+  ros::Publisher twist_pub = private_nh.advertise<geometry_msgs::Twist>("cmd_vel", 2);
+  ros::Publisher joy_pub = private_nh.advertise<sensor_msgs::Joy>("joy", 2);
+
+  ros::ServiceServer enable_disable_srv = private_nh.advertiseService("enable_disable",  EnableDisable);
+  ROS_INFO("Service Enable/Diable pad created");
 
   // Used to scale joystick output to be in [-1, 1]. Estimated from data, and not necessarily correct.
-  ros::NodeHandle private_nh("~");
+ 
   double full_scale;
   private_nh.param<double>("full_scale", full_scale, 512);
   if (full_scale < 1e-10)
@@ -144,109 +164,114 @@ int main(int argc, char **argv)
   double normed_wx = 0;
   double normed_wy = 0;
   double normed_wz = 0;
-  while (node_handle.ok())
+  while (ros::ok())
   {
-    bool joy_stale = false;
-    bool queue_empty = false;
-    
-    // Sleep when the queue is empty.
-    // If the queue is empty 30 times in a row output zeros.
-    // Output changes each time a button event happens, or when a motion
-    // event happens and the queue is empty.
-    joystick_msg.header.stamp = ros::Time().now();
-    switch (spnav_poll_event(&sev))
-    {
-      case 0:
-        queue_empty = true;
-        if (++no_motion_count > static_count_threshold)
-        {
-          if ( zero_when_static || 
-              ( fabs(normed_vx) < static_trans_deadband &&
-                fabs(normed_vy) < static_trans_deadband &&
-                fabs(normed_vz) < static_trans_deadband)
-             )
+    if(bEnable){
+      bool joy_stale = false;
+      bool queue_empty = false;
+      
+      // Sleep when the queue is empty.
+      // If the queue is empty 30 times in a row output zeros.
+      // Output changes each time a button event happens, or when a motion
+      // event happens and the queue is empty.
+      joystick_msg.header.stamp = ros::Time().now();
+      switch (spnav_poll_event(&sev))
+      {
+        case 0:
+          queue_empty = true;
+          if (++no_motion_count > static_count_threshold)
           {
-            normed_vx = normed_vy = normed_vz = 0;
-          }
+            if ( zero_when_static || 
+                ( fabs(normed_vx) < static_trans_deadband &&
+                  fabs(normed_vy) < static_trans_deadband &&
+                  fabs(normed_vz) < static_trans_deadband)
+              )
+            {
+              normed_vx = normed_vy = normed_vz = 0;
+            }
 
-          if ( zero_when_static || 
-              ( fabs(normed_wx) < static_rot_deadband &&
-                fabs(normed_wy) < static_rot_deadband &&
-                fabs(normed_wz) < static_rot_deadband )
-             )
-          {
-            normed_wx = normed_wy = normed_wz = 0;
-          }
+            if ( zero_when_static || 
+                ( fabs(normed_wx) < static_rot_deadband &&
+                  fabs(normed_wy) < static_rot_deadband &&
+                  fabs(normed_wz) < static_rot_deadband )
+              )
+            {
+              normed_wx = normed_wy = normed_wz = 0;
+            }
 
-          no_motion_count = 0;
+            no_motion_count = 0;
+            motion_stale = true;
+          }
+          break;
+
+        case SPNAV_EVENT_MOTION:
+          normed_vx = sev.motion.z / full_scale;
+          normed_vy = -sev.motion.x / full_scale;
+          normed_vz = sev.motion.y / full_scale;
+
+          normed_wx = sev.motion.rz / full_scale;
+          normed_wy = -sev.motion.rx / full_scale;
+          normed_wz = sev.motion.ry / full_scale;
+
           motion_stale = true;
-        }
-        break;
+          break;
+          
+        case SPNAV_EVENT_BUTTON:
+          //printf("type, press, bnum = <%d, %d, %d>\n", sev.button.type, sev.button.press, sev.button.bnum);
+          joystick_msg.buttons[sev.button.bnum] = sev.button.press;
 
-      case SPNAV_EVENT_MOTION:
-        normed_vx = sev.motion.z / full_scale;
-        normed_vy = -sev.motion.x / full_scale;
-        normed_vz = sev.motion.y / full_scale;
+          joy_stale = true;
+          break;
 
-        normed_wx = sev.motion.rz / full_scale;
-        normed_wy = -sev.motion.rx / full_scale;
-        normed_wz = sev.motion.ry / full_scale;
+        default:
+          ROS_WARN("Unknown message type in spacenav. This should never happen.");
+          break;
+      }
+    
+      if (motion_stale && (queue_empty || joy_stale))
+      {
+        // The offset and rot_offset are scaled.
+        geometry_msgs::Vector3 offset_msg;
+        offset_msg.x = normed_vx * linear_scale[0];
+        offset_msg.y = normed_vy * linear_scale[1];
+        offset_msg.z = normed_vz * linear_scale[2];
+        offset_pub.publish(offset_msg);
+        geometry_msgs::Vector3 rot_offset_msg;
+        rot_offset_msg.x = normed_wx * angular_scale[0];
+        rot_offset_msg.y = normed_wy * angular_scale[1];
+        rot_offset_msg.z = normed_wz * angular_scale[2];
+        rot_offset_pub.publish(rot_offset_msg);
 
-        motion_stale = true;
-        break;
-        
-      case SPNAV_EVENT_BUTTON:
-        //printf("type, press, bnum = <%d, %d, %d>\n", sev.button.type, sev.button.press, sev.button.bnum);
-        joystick_msg.buttons[sev.button.bnum] = sev.button.press;
+        geometry_msgs::Twist twist_msg;
+        twist_msg.linear = offset_msg;
+        twist_msg.angular = rot_offset_msg;
+        twist_pub.publish(twist_msg);
 
+        // The joystick.axes are normalized within [-1, 1].
+        joystick_msg.axes[0] = normed_vx;
+        joystick_msg.axes[1] = normed_vy;
+        joystick_msg.axes[2] = normed_vz;
+        joystick_msg.axes[3] = normed_wx;
+        joystick_msg.axes[4] = normed_wy;
+        joystick_msg.axes[5] = normed_wz;
+
+        no_motion_count = 0;
+        motion_stale = false;
         joy_stale = true;
-        break;
+      }
+    
+      if (joy_stale)
+      {
+        joy_pub.publish(joystick_msg);
+      }
 
-      default:
-        ROS_WARN("Unknown message type in spacenav. This should never happen.");
-        break;
+      if (queue_empty) {
+        usleep(1000);
+      }
+      
+      //ROS_INFO("spnv");
     }
-  
-    if (motion_stale && (queue_empty || joy_stale))
-    {
-      // The offset and rot_offset are scaled.
-      geometry_msgs::Vector3 offset_msg;
-      offset_msg.x = normed_vx * linear_scale[0];
-      offset_msg.y = normed_vy * linear_scale[1];
-      offset_msg.z = normed_vz * linear_scale[2];
-      offset_pub.publish(offset_msg);
-      geometry_msgs::Vector3 rot_offset_msg;
-      rot_offset_msg.x = normed_wx * angular_scale[0];
-      rot_offset_msg.y = normed_wy * angular_scale[1];
-      rot_offset_msg.z = normed_wz * angular_scale[2];
-      rot_offset_pub.publish(rot_offset_msg);
-
-      geometry_msgs::Twist twist_msg;
-      twist_msg.linear = offset_msg;
-      twist_msg.angular = rot_offset_msg;
-      twist_pub.publish(twist_msg);
-
-      // The joystick.axes are normalized within [-1, 1].
-      joystick_msg.axes[0] = normed_vx;
-      joystick_msg.axes[1] = normed_vy;
-      joystick_msg.axes[2] = normed_vz;
-      joystick_msg.axes[3] = normed_wx;
-      joystick_msg.axes[4] = normed_wy;
-      joystick_msg.axes[5] = normed_wz;
-
-      no_motion_count = 0;
-      motion_stale = false;
-      joy_stale = true;
-    }
-  
-    if (joy_stale)
-    {
-      joy_pub.publish(joystick_msg);
-    }
-
-    if (queue_empty) {
-      usleep(1000);
-    }
+    ros::spinOnce();
   }
 
   spnav_close();
