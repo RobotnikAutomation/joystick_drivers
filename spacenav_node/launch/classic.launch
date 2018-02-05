@@ -1,6 +1,11 @@
 <launch>
   <node pkg="spacenav_node" type="spacenav_node" name="spacenav" output="screen">
+    <param name="linear_scale" value="1"/>
+    <param name="angular_scale" value="3"/>
+    <param name="current_vel" value="0.1"/>
     <param name="zero_when_static" value="true"/>
     <param name="static_count_threshold" value="30"/>
+    <param name="threshold_pad" value="0.1"/>
+    <remap from="/spacenav/cmd_vel" to="/summit_xl/spacenav/cmd_vel"/>
   </node>
 </launch>

@@ -41,43 +41,38 @@
 #include "sensor_msgs/Joy.h"
 #include <robotnik_msgs/enable_disable.h>
 
+#define DEFAULT_SCALE_LINEAR	1.0
+#define DEFAULT_SCALE_ANGULAR	2.0
+#define DEFAULT_THRESHOLD     0.1
 
 //! Flag to enable/disable the communication with the publishers topics
 bool bEnable = true; // Communication flag enabled by default
+double threshold_pad = DEFAULT_THRESHOLD;
 
-/** Ensure that the vector parameter has three components.
- *
- * Used for linear_scale and angular_scale. If the parameter has one
- * component, this value is copied as second and third components.
- *
- * @return True if the parameter was set correctly.
- */
-bool ensureThreeComponents(std::vector<double>& param)
-{
-  if (param.size() == 0)
-  {
-    param.push_back(1);
-    param.push_back(1);
-    param.push_back(1);
-    return True;
+/**
+ * Return the sign
+*/
+float sign(float x){
+  if(x < 0.0){
+    return -1.0;
   }
-  if (param.size() == 3)
-  {
-    return True;
-  }
-  if (param.size() == 1)
-  {
-    param.push_back(param[0]);
-    param.push_back(param[0]);
-    return True;
-  }
-  return False;
+  return 1.0;
 }
 
 /**
- *  Enables/Disables the pad
+ * Checks whether the value is lower or bigger than a threshold
+*/
+double check_threshold(double value){
+  if(fabs(value) < threshold_pad){
+    return 0.0;
+  }
+  return sign(value) * (fabs(value - threshold_pad));
+}
+
+/**
+ *  Service than enables/disables the spacenav
  * 
- */
+*/
 bool EnableDisable(robotnik_msgs::enable_disable::Request &req, robotnik_msgs::enable_disable::Response &res){
   bEnable = req.value;
   ROS_INFO("SummitXL::Spacenav: Setting to %d", req.value);
@@ -97,7 +92,6 @@ int main(int argc, char **argv)
   ros::Publisher joy_pub = private_nh.advertise<sensor_msgs::Joy>("joy", 2);
 
   ros::ServiceServer enable_disable_srv = private_nh.advertiseService("enable_disable",  EnableDisable);
-  ROS_INFO("Service Enable/Diable pad created");
 
   // Used to scale joystick output to be in [-1, 1]. Estimated from data, and not necessarily correct.
  
@@ -109,28 +103,20 @@ int main(int argc, char **argv)
   }
   // Scale factors for the different axes. End output will be within [-scale, +scale], provided
   // full_scale normalizes to within [-1, 1].
-  std::vector<double> linear_scale;
-  std::vector<double> angular_scale;
-  private_nh.param<std::vector<double> >("linear_scale", linear_scale, std::vector<double>(3, 1));
-  private_nh.param<std::vector<double> >("angular_scale", angular_scale, std::vector<double>(3, 1));
+  double linear_scale;
+  double angular_scale;
+  double current_vel;
+  private_nh.param<double>("linear_scale", linear_scale, DEFAULT_SCALE_LINEAR);
+  private_nh.param<double>("angular_scale", angular_scale, DEFAULT_SCALE_ANGULAR);
+  private_nh.param<double>("current_vel", current_vel, current_vel);
+  private_nh.param<double>("threshold_pad", threshold_pad, threshold_pad);
 
-  if (!ensureThreeComponents(linear_scale))
-  {
-    ROS_ERROR_STREAM("Parameter " << private_nh.getNamespace() << "/linear_scale must have either one or three components.");
-    exit(EXIT_FAILURE);
-  }
-  if (!ensureThreeComponents(angular_scale))
-  {
-    ROS_ERROR_STREAM("Parameter " << private_nh.getNamespace() << "/angular_scale must have either one or three components.");
-    exit(EXIT_FAILURE);
-  }
-  ROS_DEBUG("linear_scale: %.3f %.3f %.3f", linear_scale[0], linear_scale[1], linear_scale[2]);
-  ROS_DEBUG("angular_scale: %.3f %.3f %.3f", angular_scale[0], angular_scale[1], angular_scale[2]);
+  //ROS_INFO("linear_scale: %.3f", linear_scale);
+  //ROS_INFO("angular_scale: %.3f", angular_scale);
 
   if (spnav_open() == -1)
   {
     ROS_ERROR("Could not open the space navigator device.  Did you remember to run spacenavd (as root)?");
-
     return 1;
   }
 
@@ -206,12 +192,22 @@ int main(int argc, char **argv)
 
         case SPNAV_EVENT_MOTION:
           normed_vx = sev.motion.z / full_scale;
+          normed_vx = check_threshold(normed_vx);
+
           normed_vy = -sev.motion.x / full_scale;
+          normed_vy = check_threshold(normed_vy);
+
           normed_vz = sev.motion.y / full_scale;
+          normed_vz = check_threshold(normed_vz);
 
           normed_wx = sev.motion.rz / full_scale;
+          normed_wx = check_threshold(normed_wx);
+
           normed_wy = -sev.motion.rx / full_scale;
+          normed_wy = check_threshold(normed_wy);
+
           normed_wz = sev.motion.ry / full_scale;
+          normed_wz = check_threshold(normed_wz);
 
           motion_stale = true;
           break;
@@ -232,22 +228,38 @@ int main(int argc, char **argv)
       {
         // The offset and rot_offset are scaled.
         geometry_msgs::Vector3 offset_msg;
-        offset_msg.x = normed_vx * linear_scale[0];
-        offset_msg.y = normed_vy * linear_scale[1];
-        offset_msg.z = normed_vz * linear_scale[2];
+        offset_msg.x = normed_vx * linear_scale * current_vel;
+        offset_msg.y = normed_vy * linear_scale * current_vel;
+        offset_msg.z = normed_vz * linear_scale * current_vel;
         offset_pub.publish(offset_msg);
+
         geometry_msgs::Vector3 rot_offset_msg;
-        rot_offset_msg.x = normed_wx * angular_scale[0];
-        rot_offset_msg.y = normed_wy * angular_scale[1];
-        rot_offset_msg.z = normed_wz * angular_scale[2];
+        rot_offset_msg.x = normed_wx * angular_scale * current_vel;
+        rot_offset_msg.y = normed_wy * angular_scale * current_vel;
+        rot_offset_msg.z = normed_wz * angular_scale * current_vel;
         rot_offset_pub.publish(rot_offset_msg);
 
+        // Select only the biggest value
+        if(fabs(normed_wx) > fabs(normed_wy) && fabs(normed_wx) > fabs(normed_wz)){
+          offset_msg.y = -(normed_wx * linear_scale * current_vel);
+          offset_msg.x = 0.0;
+          offset_msg.z = 0.0;
+        }else if(fabs(normed_wy) > fabs(normed_wx) && fabs(normed_wy) > fabs(normed_wz)){
+          offset_msg.y = 0.0;
+          offset_msg.x = normed_wy * linear_scale * current_vel;
+          offset_msg.z = 0.0;
+        }else{
+          offset_msg.x = 0.0;
+          offset_msg.y = 0.0;
+          offset_msg.z = normed_wz * linear_scale * current_vel;
+        }
+        
+        // Publish linear and angular velocity
         geometry_msgs::Twist twist_msg;
         twist_msg.linear = offset_msg;
         twist_msg.angular = rot_offset_msg;
         twist_pub.publish(twist_msg);
 
-        // The joystick.axes are normalized within [-1, 1].
         joystick_msg.axes[0] = normed_vx;
         joystick_msg.axes[1] = normed_vy;
         joystick_msg.axes[2] = normed_vz;
@@ -268,8 +280,7 @@ int main(int argc, char **argv)
       if (queue_empty) {
         usleep(1000);
       }
-      
-      //ROS_INFO("spnv");
+
     }
     ros::spinOnce();
   }
