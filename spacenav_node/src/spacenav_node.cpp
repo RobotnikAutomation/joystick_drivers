@@ -106,6 +106,8 @@ int main(int argc, char **argv)
   double linear_scale;
   double angular_scale;
   double current_vel;
+  double control_speed = 0.0;
+  double target_speed = 0.0;
   private_nh.param<double>("linear_scale", linear_scale, DEFAULT_SCALE_LINEAR);
   private_nh.param<double>("angular_scale", angular_scale, DEFAULT_SCALE_ANGULAR);
   private_nh.param<double>("current_vel", current_vel, current_vel);
@@ -247,6 +249,9 @@ int main(int argc, char **argv)
         }else if(fabs(normed_wy) > fabs(normed_wx) && fabs(normed_wy) > fabs(normed_wz)){
           offset_msg.y = 0.0;
           offset_msg.x = normed_wy * linear_scale * current_vel;
+          if(offset_msg.x > 0){
+            offset_msg.x *= 2;
+          }
           offset_msg.z = 0.0;
         }else{
           offset_msg.x = 0.0;
@@ -254,6 +259,16 @@ int main(int argc, char **argv)
           offset_msg.z = normed_wz * linear_scale * current_vel;
         }
         
+        // Velocity smooth
+        if(offset_msg.x > control_speed){
+          control_speed = std::min(offset_msg.x, control_speed + 0.004);
+        }else if(target_speed < control_speed){
+          control_speed = std::max(offset_msg.x, control_speed - 0.004);
+        }else{
+          control_speed = offset_msg.x;
+        }
+        offset_msg.x = control_speed;
+
         // Publish linear and angular velocity
         geometry_msgs::Twist twist_msg;
         twist_msg.linear = offset_msg;
