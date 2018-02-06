@@ -107,6 +107,8 @@ int main(int argc, char **argv)
   double angular_scale;
   double current_vel;
   double control_speed = 0.0;
+  double target_speed = 0.0;
+
   private_nh.param<double>("linear_scale", linear_scale, DEFAULT_SCALE_LINEAR);
   private_nh.param<double>("angular_scale", angular_scale, DEFAULT_SCALE_ANGULAR);
   private_nh.param<double>("current_vel", current_vel, current_vel);
@@ -268,6 +270,7 @@ int main(int argc, char **argv)
           control_speed = linear_msg.x;
         }
         linear_msg.x = control_speed;
+
 
         // Publish linear and angular velocity
         geometry_msgs::Twist twist_msg;
