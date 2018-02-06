@@ -22,6 +22,7 @@
   <depend>libspnav-dev</depend> 
   <depend>libx11-dev</depend>
   <depend>robotnik_msgs</depend>
+  <depend>yocs_velocity_smoother</depend>
 
   <exec_depend>spacenavd</exec_depend> 
 </package>
