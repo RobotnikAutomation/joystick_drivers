@@ -265,7 +265,8 @@ int main(int argc, char **argv)
         if(linear_msg.x > control_speed){
           control_speed = std::min(linear_msg.x, control_speed + 0.004);
         }else if(linear_msg.x < control_speed){
-          control_speed = std::max(linear_msg.x, control_speed - 0.006);
+          //control_speed = std::max(linear_msg.x, control_speed - 0.006);
+          control_speed = linear_msg.x;
         }else{
           control_speed = linear_msg.x;
         }
