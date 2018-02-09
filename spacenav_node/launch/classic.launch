@@ -2,10 +2,12 @@
 
   <!--include file="$(find spacenav_node)/launch/include/velocity_smoother.launch.xml"/-->
 
+  <arg name="spacenav_vel" default="0.4"/>
+
   <node pkg="spacenav_node" type="spacenav_node" name="spacenav" output="screen">
     <param name="linear_scale" value="1"/>
     <param name="angular_scale" value="2"/>
-    <param name="current_vel" value="0.4"/>
+    <param name="current_vel" value="$(arg spacenav_vel)"/>
     <param name="zero_when_static" value="true"/>
     <param name="static_count_threshold" value="30"/>
     <param name="threshold_pad" value="0.1"/>
